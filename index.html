@@ -1,89 +1,184 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Safety Signal Monitor</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <style>
-    body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; }
-    .container { display: flex; justify-content: center; gap: 20px; padding: 20px; }
-    #video-container { position: relative; border: 4px solid #444; }
-    video { width: 480px; height: 360px; transform: scaleX(-1); }
-    #status-indicator { width: 200px; height: 360px; background: green; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 24px; border-radius: 10px; transition: 0.3s; }
-    #log-box { width: 700px; height: 100px; background: #000; margin: 20px auto; padding: 10px; overflow-y: scroll; text-align: left; font-family: monospace; border: 1px solid #444; color: #0f0; }
-    .alarm-active { background: red !important; animation: blink 0.5s infinite; }
-    @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Safety Signal Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #0b0b0b; color: #fff; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 15px; overflow-x: hidden; }
+        .container { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 10px; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #start-btn { padding: 20px 40px; font-size: 1.3rem; font-weight: bold; border-radius: 50px; border: none; background: #2e7d32; color: white; cursor: pointer; box-shadow: 0 4px 20px rgba(0,255,0,0.2); }
+        .video-box { border-radius: 12px; overflow: hidden; border: 2px solid #333; position: relative; width: 100%; aspect-ratio: 4/3; background: #000; }
+        video { display: none; } /* Hide raw video */
+        canvas { width: 100%; height: 100%; transform: scaleX(-1); } /* Mirror the canvas */
+        #status-box { width: 100%; padding: 20px 0; border-radius: 12px; background: #1b5e20; text-align: center; font-size: 1.6rem; font-weight: bold; transition: 0.3s; }
+        .red-alert { background: #b71c1c !important; box-shadow: 0 0 40px #ff0000; }
+        #countdown-container { height: 30px; text-align: center; color: #ffca28; font-weight: bold; margin: 5px 0; }
+        #log-container { background: #141414; border: 1px solid #333; border-radius: 12px; padding: 15px; height: 100px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #888; }
+        .log-entry { border-bottom: 1px solid #222; padding: 2px 0; }
+    </style>
 </head>
 <body>
-  <h2>Emergency Signal Detection (Hand Gesture)</h2>
-  <div class="container">
-    <div id="video-container">
-      <video id="input_video"></video>
+
+    <div id="overlay">
+        <button id="start-btn">START MONITOR</button>
+        <p style="color: #666; margin-top: 15px;">Visual Detection & Synthetic Audio</p>
     </div>
-    <div id="status-indicator">SAFE</div>
-  </div>
-  <div id="log-box">System Status: Waiting for Camera...</div>
-  <audio id="alarm" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg"></audio>
 
-  <script>
-    const videoElement = document.getElementById('input_video');
-    const statusBox = document.getElementById('status-indicator');
-    const logBox = document.getElementById('log-box');
-    const alarm = document.getElementById('alarm');
-    
-    let signalCount = 0;
-    let isSignaling = false;
+    <div class="container">
+        <div class="video-box">
+            <video id="webcam"></video>
+            <canvas id="output-canvas"></canvas>
+        </div>
+        <div id="status-box">SYSTEM READY</div>
+        <div id="countdown-container"></div>
+        <div id="log-container"></div>
+    </div>
 
-    function onResults(results) {
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        const hand = results.multiHandLandmarks[0];
-        
-        // LOGIC: Check if thumb is tucked (Point 4 near Palm) 
-        // and if fingers are starting to cover it (Point 8, 12, 16, 20 moving down)
-        const thumbTucked = hand[4].x > hand[3].x; // Simple check for thumb position
-        const fingersDown = hand[8].y > hand[6].y; // Index finger folding
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusBox = document.getElementById('status-box');
+        const countdownDisplay = document.getElementById('countdown-container');
+        const logContainer = document.getElementById('log-container');
+        const startBtn = document.getElementById('start-btn');
+        const overlay = document.getElementById('overlay');
 
-        if (thumbTucked && fingersDown) {
-          if (!isSignaling) {
-            isSignaling = true;
-            signalCount++;
-            triggerAlert();
-          }
-        } else {
-          isSignaling = false;
-          resetAlert();
+        let audioCtx = null;
+        let firstIncidentTime = 0;
+        let isCooldown = false;
+        let timerInterval = null;
+
+        function addLog(msg) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logContainer.prepend(div);
         }
-      }
-    }
 
-    function triggerAlert() {
-      statusBox.style.background = "red";
-      statusBox.innerText = "DISTRESS SIGNAL";
-      logBox.innerHTML += `<br>> [ALERT] Signal detected! Count: ${signalCount}`;
-      logBox.scrollTop = logBox.scrollHeight;
+        function triggerSynthAlarm(duration) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth'; // More aggressive sound
+            osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
 
-      if (signalCount >= 2) {
-        alarm.play();
-        logBox.innerHTML += `<br>> [CRITICAL] Audio Alarm Triggered!`;
-      }
-    }
+        function isDistressSignal(lm) {
+            const getDist = (p1, p2) => Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2);
+            const wrist = lm[0];
+            const thumbTucked = getDist(lm[4], lm[17]) < getDist(lm[4], lm[5]);
+            const f1 = getDist(lm[8], wrist) < getDist(lm[5], wrist);
+            const f2 = getDist(lm[12], wrist) < getDist(lm[9], wrist);
+            const f3 = getDist(lm[16], wrist) < getDist(lm[13], wrist);
+            const f4 = getDist(lm[20], wrist) < getDist(lm[17], wrist);
+            return thumbTucked && f1 && f2 && f3 && f4;
+        }
 
-    function resetAlert() {
-      statusBox.style.background = "green";
-      statusBox.innerText = "SAFE";
-    }
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    hands.onResults(onResults);
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    const isSignal = isDistressSignal(landmarks);
+                    
+                    // HIGHLIGHT BOX CALCULATION
+                    const xCoords = landmarks.map(l => l.x * canvasElement.width);
+                    const yCoords = landmarks.map(l => l.y * canvasElement.height);
+                    const minX = Math.min(...xCoords) - 20;
+                    const maxX = Math.max(...xCoords) + 20;
+                    const minY = Math.min(...yCoords) - 20;
+                    const maxY = Math.max(...yCoords) + 20;
 
-    const camera = new Camera(videoElement, {
-      onFrame: async () => { await hands.send({image: videoElement}); },
-      width: 480, height: 360
-    });
-    camera.start();
-    logBox.innerHTML += `<br>> Camera Active. AI monitoring started...`;
-  </script>
+                    // Draw the box
+                    canvasCtx.beginPath();
+                    canvasCtx.rect(minX, minY, maxX - minX, maxY - minY);
+                    canvasCtx.lineWidth = 4;
+                    canvasCtx.strokeStyle = isSignal ? '#ff0000' : '#00ff00';
+                    canvasCtx.stroke();
+                    
+                    // Draw a label
+                    canvasCtx.fillStyle = isSignal ? '#ff0000' : '#00ff00';
+                    canvasCtx.font = "bold 20px Arial";
+                    canvasCtx.fillText(isSignal ? "DISTRESS DETECTED" : "HAND DETECTED", minX, minY - 10);
+
+                    if (isSignal) handleDetection();
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function handleDetection() {
+            if (isCooldown) return;
+            const now = Date.now();
+            statusBox.classList.add('red-alert');
+            statusBox.innerText = "SIGNAL DETECTED";
+
+            if (firstIncidentTime > 0 && (now - firstIncidentTime) < 15000) {
+                addLog("ALARM TRIGGERED");
+                triggerSynthAlarm(5);
+                clearInterval(timerInterval);
+                countdownDisplay.innerText = "!!! ALARM !!!";
+                isCooldown = true;
+                setTimeout(resetSystem, 5000);
+            } else {
+                addLog("1st Signal Caught.");
+                firstIncidentTime = now;
+                startCountdown(15);
+                isCooldown = true;
+                setTimeout(() => isCooldown = false, 2500);
+            }
+        }
+
+        function startCountdown(sec) {
+            let left = sec;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                left--;
+                countdownDisplay.innerText = `ALARM WINDOW: ${left}s`;
+                if (left <= 0) { resetSystem(); addLog("Window expired."); }
+            }, 1000);
+        }
+
+        function resetSystem() {
+            clearInterval(timerInterval);
+            firstIncidentTime = 0;
+            isCooldown = false;
+            countdownDisplay.innerText = "";
+            statusBox.classList.remove('red-alert');
+            statusBox.innerText = "SYSTEM READY";
+        }
+
+        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+        hands.onResults(onResults);
+
+        startBtn.addEventListener('click', () => {
+            overlay.style.display = 'none';
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { 
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                    await hands.send({image: videoElement}); 
+                },
+                width: 640, height: 480
+            });
+            camera.start();
+            addLog("System Online.");
+        });
+    </script>
 </body>
 </html>
