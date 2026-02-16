@@ -4,176 +4,141 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Safety Signal Monitor</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <style>
-        body { font-family: sans-serif; background: #0b0b0b; color: #fff; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 15px; }
+        body { font-family: sans-serif; background: #0b0b0b; color: #fff; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 10px; }
         .container { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 10px; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-        #start-btn { padding: 20px 40px; font-size: 1.3rem; font-weight: bold; border-radius: 50px; border: none; background: #2e7d32; color: white; cursor: pointer; box-shadow: 0 4px 20px rgba(0,255,0,0.2); }
-        .video-box { border-radius: 12px; overflow: hidden; border: 2px solid #333; position: relative; background: #000; }
-        video { width: 100%; transform: scaleX(-1); display: block; }
-        #status-box { width: 100%; padding: 20px 0; border-radius: 12px; background: #1b5e20; text-align: center; font-size: 1.6rem; font-weight: bold; transition: 0.3s; }
-        .red-alert { background: #b71c1c !important; box-shadow: 0 0 40px #ff0000; }
-        #countdown-container { height: 30px; text-align: center; color: #ffca28; font-weight: bold; margin: 5px 0; }
-        #log-container { background: #141414; border: 1px solid #333; border-radius: 12px; padding: 15px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #888; }
-        .log-entry { border-bottom: 1px solid #222; padding: 2px 0; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        #start-btn { padding: 25px 50px; font-size: 1.5rem; font-weight: bold; border-radius: 50px; border: none; background: #2e7d32; color: white; cursor: pointer; box-shadow: 0 0 30px rgba(0,255,0,0.3); }
+        .video-box { border-radius: 12px; overflow: hidden; border: 4px solid #333; position: relative; width: 100%; aspect-ratio: 4/3; background: #000; transition: border-color 0.3s; }
+        .active-hand { border-color: #00ff00 !important; }
+        .active-signal { border-color: #ff0000 !important; box-shadow: 0 0 30px #ff0000; }
+        video { width: 100%; height: 100%; transform: scaleX(-1); display: block; object-fit: cover; }
+        #status-box { width: 100%; padding: 20px 0; border-radius: 12px; background: #1b5e20; text-align: center; font-size: 1.6rem; font-weight: bold; }
+        #log-container { background: #141414; border: 1px solid #333; border-radius: 12px; padding: 15px; height: 120px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #888; }
     </style>
 </head>
 <body>
 
     <div id="overlay">
-        <button id="start-btn">START MONITOR</button>
-        <p style="color: #666; margin-top: 15px;">Unlocks Camera & Telegram Notifications</p>
+        <button id="start-btn">ACTIVATE CAMERA</button>
+        <p style="color: #666; margin-top: 15px;">Required for AI Hand Detection</p>
     </div>
 
     <div class="container">
-        <div class="video-box"><video id="webcam" autoplay playsinline></video></div>
+        <div id="v-wrap" class="video-box"><video id="webcam" autoplay playsinline muted></video></div>
         <div id="status-box">SYSTEM READY</div>
-        <div id="countdown-container"></div>
         <div id="log-container"></div>
     </div>
 
     <script>
-        // === CONFIGURATION: ENTER YOUR DETAILS HERE ===
+        // CONFIGURATION: Replace these with your real Bot Token and Chat ID
         const TELEGRAM_TOKEN = '8354493610:AAE7HuJRG6nUl7Uv1gLXC5J4LZympYZLleY'; 
         const TELEGRAM_CHAT_ID = '8057014714';
-        // ==============================================
 
         const videoElement = document.getElementById('webcam');
+        const vWrap = document.getElementById('v-wrap');
         const statusBox = document.getElementById('status-box');
-        const countdownDisplay = document.getElementById('countdown-container');
         const logContainer = document.getElementById('log-container');
         const startBtn = document.getElementById('start-btn');
-        const overlay = document.getElementById('overlay');
 
         let audioCtx = null;
         let firstIncidentTime = 0;
         let isCooldown = false;
-        let timerInterval = null;
 
         function addLog(msg) {
             const div = document.createElement('div');
-            div.className = 'log-entry';
             div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
             logContainer.prepend(div);
         }
 
         async function sendTelegramAlert() {
-            const message = "🚨 EMERGENCY: Distress signal detected twice on laptop monitor.";
-            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${encodeURIComponent(message)}`;
-            
-            try {
-                const response = await fetch(url);
-                if (response.ok) {
-                    addLog("Telegram notification sent to phone.");
-                } else {
-                    addLog("Telegram Error: Check Token/ID.");
-                }
-            } catch (error) {
-                addLog("Telegram failed: " + error.message);
-            }
+            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${encodeURIComponent("🚨 EMERGENCY: Signal Detected Twice!")}`;
+            try { await fetch(url); addLog("Telegram Alert Sent."); } catch (e) { addLog("Telegram Failed."); }
         }
 
-        function triggerSynthAlarm(duration) {
+        function triggerAlarm() {
             if (!audioCtx) return;
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = 'square';
-            osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
+            osc.frequency.setValueAtTime(880, audioCtx.currentTime);
             gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 4);
         }
 
-        function isDistressSignal(lm) {
-            const getDist = (p1, p2) => Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2);
+        function isDistress(lm) {
+            const d = (p1, p2) => Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2);
             const wrist = lm[0];
-            
-            // Thumb tucked: Tip (4) closer to pinky base (17) than index base (5)
-            const thumbTucked = getDist(lm[4], lm[17]) < getDist(lm[4], lm[5]);
-            
-            // Fingers closed: Tips (8,12,16,20) closer to wrist than knuckles (5,9,13,17)
-            const f1 = getDist(lm[8], wrist) < getDist(lm[5], wrist);
-            const f2 = getDist(lm[12], wrist) < getDist(lm[9], wrist);
-            const f3 = getDist(lm[16], wrist) < getDist(lm[13], wrist);
-            const f4 = getDist(lm[20], wrist) < getDist(lm[17], wrist);
-            
-            return thumbTucked && f1 && f2 && f3 && f4;
+            const thumbTucked = d(lm[4], lm[17]) < d(lm[4], lm[5]);
+            // Checking only the first two fingers makes it MUCH easier for the AI to detect in poor light
+            const f1_closed = d(lm[8], wrist) < d(lm[5], wrist);
+            const f2_closed = d(lm[12], wrist) < d(lm[9], wrist);
+            return thumbTucked && f1_closed && f2_closed;
         }
+
+        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        
+        // Settings optimized for faster, more "forgiving" detection
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0, // 0 is much faster and more compatible with mobile/incognito
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(res => {
+            if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+                vWrap.classList.add('active-hand');
+                if (isDistress(res.multiHandLandmarks[0])) {
+                    vWrap.classList.add('active-signal');
+                    handleDetection();
+                } else {
+                    vWrap.classList.remove('active-signal');
+                }
+            } else {
+                vWrap.classList.remove('active-hand', 'active-signal');
+            }
+        });
 
         function handleDetection() {
             if (isCooldown) return;
             const now = Date.now();
-            statusBox.classList.add('red-alert');
+            statusBox.style.background = "#b71c1c";
             statusBox.innerText = "SIGNAL DETECTED";
 
             if (firstIncidentTime > 0 && (now - firstIncidentTime) < 15000) {
-                // SECOND SIGNAL
-                addLog("ALARM TRIGGERED - Sending Telegram...");
-                triggerSynthAlarm(5);
-                sendTelegramAlert();
-                
-                clearInterval(timerInterval);
-                countdownDisplay.innerText = "!!! ALARM !!!";
-                isCooldown = true;
-                setTimeout(resetSystem, 5000);
+                addLog("ALARM TRIGGERED!");
+                triggerAlarm(); sendTelegramAlert();
+                firstIncidentTime = 0;
             } else {
-                // FIRST SIGNAL
-                addLog("1st Signal: 15s window open.");
+                addLog("1st Signal Caught.");
                 firstIncidentTime = now;
-                startCountdown(15);
-                isCooldown = true;
-                setTimeout(() => isCooldown = false, 2500); // 2.5s buffer to prevent double-count
             }
+            isCooldown = true;
+            setTimeout(() => {
+                isCooldown = false;
+                statusBox.style.background = "#1b5e20";
+                statusBox.innerText = "MONITORING...";
+            }, 3000);
         }
 
-        function startCountdown(sec) {
-            let left = sec;
-            clearInterval(timerInterval);
-            timerInterval = setInterval(() => {
-                left--;
-                countdownDisplay.innerText = `ALARM WINDOW: ${left}s`;
-                if (left <= 0) { 
-                    resetSystem(); 
-                    addLog("Window expired. System reset."); 
-                }
-            }, 1000);
-        }
-
-        function resetSystem() {
-            clearInterval(timerInterval);
-            firstIncidentTime = 0;
-            isCooldown = false;
-            countdownDisplay.innerText = "";
-            statusBox.classList.remove('red-alert');
-            statusBox.innerText = "SYSTEM READY";
-        }
-
-        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6});
-        hands.onResults(res => {
-            if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
-                if (isDistressSignal(res.multiHandLandmarks[0])) handleDetection();
-            }
-        });
-
-        startBtn.addEventListener('click', () => {
-            overlay.style.display = 'none';
-            // Resume/Initialize audio context on user click
+        startBtn.addEventListener('click', async () => {
+            document.getElementById('overlay').style.display = 'none';
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
             
-            const camera = new Camera(videoElement, {
-                onFrame: async () => { await hands.send({image: videoElement}); },
-                width: 640, height: 480
-            });
-            camera.start();
-            addLog("System Online. Monitoring active.");
+            try {
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => { await hands.send({image: videoElement}); },
+                    width: 640, height: 480
+                });
+                camera.start();
+                addLog("AI System Online.");
+            } catch (err) {
+                addLog("Error: " + err.name);
+            }
         });
     </script>
 </body>
