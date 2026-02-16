@@ -3,43 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Safety Monitor - GitHub Hosted</title>
+    <title>Safety Monitor - Final</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
     <style>
-        body { font-family: sans-serif; background: #0b0b0b; color: #fff; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 15px; }
+        body { font-family: sans-serif; background: #0b0b0b; color: #fff; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 10px; }
         .container { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 10px; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-        #start-btn { padding: 20px 40px; font-size: 1.3rem; font-weight: bold; border-radius: 50px; border: none; background: #2e7d32; color: white; cursor: pointer; box-shadow: 0 4px 20px rgba(0,255,0,0.2); }
-        .video-box { border-radius: 12px; overflow: hidden; border: 2px solid #333; position: relative; background: #000; }
-        video { width: 100%; transform: scaleX(-1); display: block; }
-        #status-box { width: 100%; padding: 20px 0; border-radius: 12px; background: #1b5e20; text-align: center; font-size: 1.6rem; font-weight: bold; transition: 0.3s; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #start-btn { padding: 20px 40px; font-size: 1.3rem; font-weight: bold; border-radius: 50px; border: none; background: #2e7d32; color: white; cursor: pointer; }
+        .video-box { border-radius: 12px; overflow: hidden; border: 2px solid #333; position: relative; aspect-ratio: 4/3; background: #000; }
+        video { display: none; } /* Raw video is processed in background */
+        canvas { width: 100%; height: 100%; transform: scaleX(-1); } /* Mirror preview */
+        #status-box { width: 100%; padding: 20px 0; border-radius: 12px; background: #1b5e20; text-align: center; font-size: 1.6rem; font-weight: bold; }
         .red-alert { background: #b71c1c !important; box-shadow: 0 0 40px #ff0000; }
-        #countdown-container { height: 30px; text-align: center; color: #ffca28; font-weight: bold; margin: 5px 0; }
-        #log-container { background: #141414; border: 1px solid #333; border-radius: 12px; padding: 15px; height: 120px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #888; }
-        .log-entry { border-bottom: 1px solid #222; padding: 2px 0; }
+        #countdown-container { height: 30px; text-align: center; color: #ffca28; font-weight: bold; margin-top: 5px; }
+        #log-container { background: #141414; border: 1px solid #333; border-radius: 12px; padding: 15px; height: 100px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; color: #888; }
     </style>
 </head>
 <body>
 
     <div id="overlay">
-        <button id="start-btn">START MONITOR</button>
-        <p style="color: #666; margin-top: 15px;">Unlocks Camera & Telegram Notifications</p>
+        <button id="start-btn">START SYSTEM</button>
+        <p style="color: #666; margin-top: 15px;">Click to Enable Camera & Notifications</p>
     </div>
 
     <div class="container">
-        <div class="video-box"><video id="webcam" autoplay playsinline></video></div>
+        <div class="video-box">
+            <video id="webcam"></video>
+            <canvas id="output-canvas"></canvas>
+        </div>
         <div id="status-box">SYSTEM READY</div>
         <div id="countdown-container"></div>
         <div id="log-container"></div>
     </div>
 
     <script>
-        // CONFIGURATION - ENTER YOUR TELEGRAM DETAILS HERE
+        // CONFIG - ENTER YOUR DETAILS
         const TELEGRAM_TOKEN = '8354493610:AAE7HuJRG6nUl7Uv1gLXC5J4LZympYZLleY'; 
         const TELEGRAM_CHAT_ID = '8057014714';
 
         const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
         const statusBox = document.getElementById('status-box');
         const countdownDisplay = document.getElementById('countdown-container');
         const logContainer = document.getElementById('log-container');
@@ -53,33 +60,24 @@
 
         function addLog(msg) {
             const div = document.createElement('div');
-            div.className = 'log-entry';
             div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
             logContainer.prepend(div);
         }
 
         async function sendTelegramAlert() {
-            const msg = "🚨 EMERGENCY: Distress signal detected twice.";
-            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${encodeURIComponent(msg)}`;
-            try {
-                await fetch(url);
-                addLog("Telegram notification sent.");
-            } catch (e) {
-                addLog("Telegram failed: " + e.message);
-            }
+            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${encodeURIComponent("🚨 EMERGENCY ALERT: Signal detected on laptop.")}`;
+            try { await fetch(url); addLog("Telegram Sent."); } catch (e) { addLog("Telegram Fail."); }
         }
 
-        function triggerSynthAlarm(duration) {
+        function triggerSynthAlarm() {
             if (!audioCtx) return;
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = 'square';
             osc.frequency.setValueAtTime(880, audioCtx.currentTime);
             gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 5);
         }
 
         function isDistressSignal(lm) {
@@ -93,6 +91,20 @@
             return thumbTucked && f1 && f2 && f3 && f4;
         }
 
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                    if (isDistressSignal(landmarks)) handleDetection();
+                }
+            }
+            canvasCtx.restore();
+        }
+
         function handleDetection() {
             if (isCooldown) return;
             const now = Date.now();
@@ -100,21 +112,19 @@
             statusBox.innerText = "SIGNAL DETECTED";
 
             if (firstIncidentTime > 0 && (now - firstIncidentTime) < 15000) {
-                // SECOND TRIGGER
-                addLog("ALARM TRIGGERED");
-                triggerSynthAlarm(5);
+                addLog("ALARM TRIGGERED!");
+                triggerSynthAlarm();
                 sendTelegramAlert();
                 clearInterval(timerInterval);
-                countdownDisplay.innerText = "!!! ALARM ACTIVE !!!";
+                countdownDisplay.innerText = "!!! ALARM !!!";
                 isCooldown = true;
                 setTimeout(resetSystem, 5000);
             } else {
-                // FIRST TRIGGER
-                addLog("1st Signal: 15s window opened.");
+                addLog("1st Signal Caught.");
                 firstIncidentTime = now;
                 startCountdown(15);
                 isCooldown = true;
-                setTimeout(() => isCooldown = false, 2500); // 2.5s buffer
+                setTimeout(() => isCooldown = false, 2500);
             }
         }
 
@@ -124,7 +134,7 @@
             timerInterval = setInterval(() => {
                 left--;
                 countdownDisplay.innerText = `ALARM WINDOW: ${left}s`;
-                if (left <= 0) { resetSystem(); addLog("Window expired."); }
+                if (left <= 0) resetSystem();
             }, 1000);
         }
 
@@ -138,22 +148,22 @@
         }
 
         const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6});
-        hands.onResults(res => {
-            if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
-                if (isDistressSignal(res.multiHandLandmarks[0])) handleDetection();
-            }
-        });
+        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+        hands.onResults(onResults);
 
         startBtn.addEventListener('click', () => {
             overlay.style.display = 'none';
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const camera = new Camera(videoElement, {
-                onFrame: async () => { await hands.send({image: videoElement}); },
+                onFrame: async () => { 
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                    await hands.send({image: videoElement}); 
+                },
                 width: 640, height: 480
             });
             camera.start();
-            addLog("System initialized.");
+            addLog("System Online.");
         });
     </script>
 </body>
